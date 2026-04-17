@@ -1,4 +1,4 @@
-# CodeAlpha Cybersecurity Internship 🔐
+# CodeAlpha Cybersecurity Internship 
 
 **Intern:** Nwafor Bernard Offorbuike  
 **Programme:** CodeAlpha Cybersecurity Internship  
