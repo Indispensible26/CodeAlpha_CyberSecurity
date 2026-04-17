@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>IDS Alert Dashboard — CodeAlpha</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --muted:#8b949e;
+          --critical:#ff4444; --high:#ff8800; --medium:#f0c040; --low:#3fb950; --info:#58a6ff; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; padding:24px; }
+  h1 { font-size:1.5rem; margin-bottom:4px; }
+  .sub { color:var(--muted); font-size:.85rem; margin-bottom:24px; }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:14px; margin-bottom:28px; }
+  .stat { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; text-align:center; }
+  .stat .num { font-size:2rem; font-weight:700; }
+  .stat .label { font-size:.78rem; color:var(--muted); margin-top:4px; }
+
+  .controls { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px; }
+  .controls input, .controls select {
+    background:#0d1117; border:1px solid var(--border); color:var(--text);
+    padding:8px 12px; border-radius:8px; font-size:.88rem; outline:none;
+  }
+  .btn { background:#1f6feb; color:#fff; border:none; padding:8px 18px; border-radius:8px; cursor:pointer; font-size:.88rem; }
+  .btn:hover { opacity:.85; }
+  .btn.danger { background:#da3633; }
+
+  table { width:100%; border-collapse:collapse; font-size:.85rem; }
+  th { background:rgba(31,111,235,.1); color:#58a6ff; padding:10px 12px; text-align:left; position:sticky; top:0; }
+  td { padding:9px 12px; border-bottom:1px solid var(--border); }
+  tr:hover td { background:rgba(255,255,255,.03); }
+  .sev { border-radius:4px; padding:2px 8px; font-size:.78rem; font-weight:600; text-transform:uppercase; }
+  .CRITICAL { background:rgba(255,68,68,.15); color:var(--critical); }
+  .HIGH     { background:rgba(255,136,0,.15);  color:var(--high); }
+  .MEDIUM   { background:rgba(240,192,64,.15); color:var(--medium); }
+  .LOW      { background:rgba(63,185,80,.15);  color:var(--low); }
+  .INFO     { background:rgba(88,166,255,.15); color:var(--info); }
+
+  .empty { text-align:center; padding:40px; color:var(--muted); }
+  .chart-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:28px; }
+  canvas { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; width:100%; height:220px; }
+  @media(max-width:640px){ .chart-row{ grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<h1>🛡️ IDS Alert Dashboard</h1>
+<p class="sub">CodeAlpha Internship — Task 4 | Load your <code>ids_alerts_*.json</code> file to visualise alerts</p>
+
+<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:24px;">
+  <strong>📂 Load Alert JSON</strong><br/><br/>
+  <input type="file" id="file-input" accept=".json" onchange="loadFile(event)"/>
+  <span style="color:var(--muted);font-size:.82rem;margin-left:12px;">Or use the demo data button →</span>
+  <button class="btn" onclick="loadDemo()" style="margin-left:10px">Load Demo Data</button>
+</div>
+
+<!-- STAT CARDS -->
+<div class="grid" id="stats-grid" style="display:none">
+  <div class="stat"><div class="num" id="s-total" style="color:#58a6ff">0</div><div class="label">Total Alerts</div></div>
+  <div class="stat"><div class="num" id="s-crit" style="color:var(--critical)">0</div><div class="label">Critical</div></div>
+  <div class="stat"><div class="num" id="s-high" style="color:var(--high)">0</div><div class="label">High</div></div>
+  <div class="stat"><div class="num" id="s-med" style="color:var(--medium)">0</div><div class="label">Medium</div></div>
+  <div class="stat"><div class="num" id="s-low" style="color:var(--low)">0</div><div class="label">Low</div></div>
+  <div class="stat"><div class="num" id="s-uniq" style="color:#d2a8ff">0</div><div class="label">Unique Sources</div></div>
+</div>
+
+<!-- CHARTS -->
+<div class="chart-row" id="chart-row" style="display:none">
+  <canvas id="sev-chart"></canvas>
+  <canvas id="rule-chart"></canvas>
+</div>
+
+<!-- CONTROLS -->
+<div class="controls" id="controls" style="display:none">
+  <input type="text" id="filter-ip" placeholder="Filter by IP..." oninput="renderTable()"/>
+  <select id="filter-sev" onchange="renderTable()">
+    <option value="">All Severities</option>
+    <option>CRITICAL</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option><option>INFO</option>
+  </select>
+  <button class="btn" onclick="exportCSV()">⬇ Export CSV</button>
+  <button class="btn danger" onclick="clearData()">🗑 Clear</button>
+</div>
+
+<!-- TABLE -->
+<div id="table-wrap" style="display:none;overflow-x:auto">
+  <table>
+    <thead><tr><th>#</th><th>Timestamp</th><th>Severity</th><th>Rule</th><th>Src IP</th><th>Dst IP</th><th>Proto</th><th>Detail</th></tr></thead>
+    <tbody id="alert-tbody"></tbody>
+  </table>
+</div>
+<div id="empty-msg" class="empty" style="display:none">No alerts match the current filter.</div>
+
+<script>
+let allAlerts = [];
+
+function loadFile(e){
+  const f = e.target.files[0];
+  if(!f) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    try {
+      allAlerts = JSON.parse(ev.target.result);
+      processAlerts();
+    } catch { alert('Invalid JSON file.'); }
+  };
+  r.readAsText(f);
+}
+
+function loadDemo(){
+  allAlerts = [
+    {timestamp:"2025-04-14 09:01:05",severity:"CRITICAL",rule:"TCP SYN Port Scan Detected",src_ip:"192.168.1.45",dst_ip:"192.168.1.1",protocol:"TCP",detail:"25 SYN packets in 5s"},
+    {timestamp:"2025-04-14 09:01:12",severity:"CRITICAL",rule:"Multi-Port Scan — Possible Recon",src_ip:"192.168.1.45",dst_ip:"192.168.1.1",protocol:"TCP",detail:"18 unique destination ports"},
+    {timestamp:"2025-04-14 09:02:30",severity:"HIGH",rule:"SSH Brute Force Detected",src_ip:"10.0.0.88",dst_ip:"192.168.1.10",protocol:"TCP",detail:"8 SSH attempts in 30s"},
+    {timestamp:"2025-04-14 09:03:14",severity:"CRITICAL",rule:"SQL Injection Attempt",src_ip:"203.45.67.89",dst_ip:"192.168.1.20",protocol:"HTTP",detail:"Pattern: 'union select'"},
+    {timestamp:"2025-04-14 09:03:18",severity:"HIGH",rule:"XSS Attempt Detected",src_ip:"203.45.67.89",dst_ip:"192.168.1.20",protocol:"HTTP",detail:"Pattern: '<script>'"},
+    {timestamp:"2025-04-14 09:04:00",severity:"CRITICAL",rule:"ICMP Flood (DoS) Detected",src_ip:"172.16.0.5",dst_ip:"192.168.1.1",protocol:"ICMP",detail:"80 ICMP packets in 5s"},
+    {timestamp:"2025-04-14 09:05:22",severity:"HIGH",rule:"Suspicious C2 Port — Metasploit Meterpreter",src_ip:"192.168.1.99",dst_ip:"45.33.32.156",protocol:"TCP",detail:"Connection to port 4444"},
+    {timestamp:"2025-04-14 09:06:11",severity:"CRITICAL",rule:"Possible Reverse Shell Payload",src_ip:"192.168.1.99",dst_ip:"45.33.32.156",protocol:"TCP",detail:"Pattern: '/bin/bash'"},
+    {timestamp:"2025-04-14 09:07:05",severity:"HIGH",rule:"Possible DNS Tunnelling",src_ip:"192.168.1.77",dst_ip:"8.8.8.8",protocol:"DNS",detail:"45 DNS queries in 10s"},
+    {timestamp:"2025-04-14 09:08:30",severity:"MEDIUM",rule:"Telnet Access Attempt",src_ip:"192.168.1.12",dst_ip:"192.168.1.3",protocol:"TCP",detail:"Port 23"},
+    {timestamp:"2025-04-14 09:09:44",severity:"HIGH",rule:"Directory Traversal Attempt",src_ip:"203.45.67.89",dst_ip:"192.168.1.20",protocol:"HTTP",detail:"Pattern: '../'"},
+    {timestamp:"2025-04-14 09:10:01",severity:"HIGH",rule:"TCP XMAS Scan Detected",src_ip:"192.168.1.45",dst_ip:"192.168.1.1",protocol:"TCP",detail:"FIN+PSH+URG flags"},
+  ];
+  processAlerts();
+}
+
+function processAlerts(){
+  if(!allAlerts.length){ alert('No alerts found.'); return; }
+
+  // Stats
+  document.getElementById('stats-grid').style.display = 'grid';
+  document.getElementById('chart-row').style.display = 'grid';
+  document.getElementById('controls').style.display = 'flex';
+  document.getElementById('table-wrap').style.display = 'block';
+
+  const counts = {CRITICAL:0,HIGH:0,MEDIUM:0,LOW:0,INFO:0};
+  const ips = new Set();
+  allAlerts.forEach(a => { counts[a.severity] = (counts[a.severity]||0)+1; ips.add(a.src_ip); });
+
+  document.getElementById('s-total').textContent = allAlerts.length;
+  document.getElementById('s-crit').textContent  = counts.CRITICAL||0;
+  document.getElementById('s-high').textContent  = counts.HIGH||0;
+  document.getElementById('s-med').textContent   = counts.MEDIUM||0;
+  document.getElementById('s-low').textContent   = counts.LOW||0;
+  document.getElementById('s-uniq').textContent  = ips.size;
+
+  drawSevChart(counts);
+  drawRuleChart();
+  renderTable();
+}
+
+function renderTable(){
+  const ipFilter  = document.getElementById('filter-ip').value.toLowerCase();
+  const sevFilter = document.getElementById('filter-sev').value;
+
+  const filtered = allAlerts.filter(a =>
+    (!ipFilter  || a.src_ip.includes(ipFilter) || a.dst_ip.includes(ipFilter)) &&
+    (!sevFilter || a.severity === sevFilter)
+  );
+
+  const tbody = document.getElementById('alert-tbody');
+  const empty = document.getElementById('empty-msg');
+
+  if(!filtered.length){
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  tbody.innerHTML = filtered.map((a,i) => `
+    <tr>
+      <td>${i+1}</td>
+      <td>${a.timestamp}</td>
+      <td><span class="sev ${a.severity}">${a.severity}</span></td>
+      <td>${a.rule}</td>
+      <td><code>${a.src_ip}</code></td>
+      <td><code>${a.dst_ip}</code></td>
+      <td>${a.protocol}</td>
+      <td style="color:#8b949e;font-size:.82rem">${a.detail||''}</td>
+    </tr>`).join('');
+}
+
+function drawSevChart(counts){
+  const canvas = document.getElementById('sev-chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  canvas.width = W; canvas.height = H;
+  ctx.clearRect(0,0,W,H);
+
+  const labels = ['CRITICAL','HIGH','MEDIUM','LOW','INFO'];
+  const colors = ['#ff4444','#ff8800','#f0c040','#3fb950','#58a6ff'];
+  const vals = labels.map(l => counts[l]||0);
+  const max = Math.max(...vals, 1);
+  const pad = 40, barW = (W - pad*2) / labels.length - 10;
+
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Alerts by Severity', W/2, 20);
+
+  vals.forEach((v,i) => {
+    const x = pad + i*(barW+10);
+    const barH = ((H-70) * v / max);
+    const y = H - 30 - barH;
+    ctx.fillStyle = colors[i];
+    ctx.beginPath(); ctx.roundRect(x,y,barW,barH,4); ctx.fill();
+    ctx.fillStyle = '#e6edf3';
+    ctx.font = '11px sans-serif';
+    ctx.fillText(v, x+barW/2, y-4);
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '9px sans-serif';
+    ctx.fillText(labels[i].slice(0,4), x+barW/2, H-14);
+  });
+}
+
+function drawRuleChart(){
+  const canvas = document.getElementById('rule-chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  canvas.width = W; canvas.height = H;
+  ctx.clearRect(0,0,W,H);
+
+  const ruleCount = {};
+  allAlerts.forEach(a => { ruleCount[a.rule] = (ruleCount[a.rule]||0)+1; });
+  const sorted = Object.entries(ruleCount).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const max = Math.max(...sorted.map(x=>x[1]),1);
+  const pad = 10, rowH = (H-50)/sorted.length;
+
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Top 5 Triggered Rules', W/2, 20);
+
+  sorted.forEach(([rule,count],i) => {
+    const y = 35 + i*rowH;
+    const barW = ((W-150)*count/max);
+    ctx.fillStyle = '#1f6feb';
+    ctx.beginPath(); ctx.roundRect(130,y+4,barW,rowH-10,3); ctx.fill();
+    ctx.fillStyle = '#e6edf3';
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'right';
+    const label = rule.length>22 ? rule.slice(0,22)+'…' : rule;
+    ctx.fillText(label, 124, y+rowH/2+4);
+    ctx.fillStyle = '#8b949e';
+    ctx.textAlign = 'left';
+    ctx.fillText(count, 134+barW, y+rowH/2+4);
+  });
+}
+
+function exportCSV(){
+  const headers = ['timestamp','severity','rule','src_ip','dst_ip','protocol','detail'];
+  const rows = allAlerts.map(a => headers.map(h => `"${(a[h]||'').replace(/"/g,'""')}"`).join(','));
+  const csv = [headers.join(','), ...rows].join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'ids_alerts_export.csv';
+  a.click();
+}
+
+function clearData(){
+  allAlerts = [];
+  document.getElementById('stats-grid').style.display='none';
+  document.getElementById('chart-row').style.display='none';
+  document.getElementById('controls').style.display='none';
+  document.getElementById('table-wrap').style.display='none';
+  document.getElementById('empty-msg').style.display='none';
+  document.getElementById('file-input').value='';
+}
+</script>
+</body>
+</html>

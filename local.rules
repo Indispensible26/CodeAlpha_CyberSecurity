@@ -1,0 +1,114 @@
+# =============================================================================
+# CodeAlpha Cybersecurity Internship — Task 4: NIDS
+# Custom Snort Rules — local.rules
+# Author: Nwafor Bernard Offorbuike
+# =============================================================================
+# Rule Format:
+#   action protocol src_ip src_port direction dst_ip dst_port (options)
+# =============================================================================
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 1: PORT SCANNING DETECTION
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Detect TCP SYN port scan (Nmap-style)
+alert tcp any any -> $HOME_NET any (msg:"PORTSCAN TCP SYN Scan Detected"; flags:S; threshold:type threshold, track by_src, count 20, seconds 5; classtype:attempted-recon; sid:1000001; rev:1;)
+
+# Detect NULL scan (no TCP flags set)
+alert tcp any any -> $HOME_NET any (msg:"PORTSCAN TCP NULL Scan"; flags:0; classtype:attempted-recon; sid:1000002; rev:1;)
+
+# Detect FIN scan
+alert tcp any any -> $HOME_NET any (msg:"PORTSCAN TCP FIN Scan"; flags:F; classtype:attempted-recon; sid:1000003; rev:1;)
+
+# Detect XMAS scan (FIN+PSH+URG flags)
+alert tcp any any -> $HOME_NET any (msg:"PORTSCAN TCP XMAS Scan Detected"; flags:FPU; classtype:attempted-recon; sid:1000004; rev:1;)
+
+# Detect UDP port scan
+alert udp any any -> $HOME_NET any (msg:"PORTSCAN UDP Scan Detected"; threshold:type threshold, track by_src, count 30, seconds 5; classtype:attempted-recon; sid:1000005; rev:1;)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 2: BRUTE FORCE DETECTION
+# ─────────────────────────────────────────────────────────────────────────────
+
+# SSH brute force
+alert tcp any any -> $HOME_NET 22 (msg:"BRUTE FORCE SSH Login Attempt"; flow:to_server,established; content:"SSH"; threshold:type threshold, track by_src, count 5, seconds 30; classtype:attempted-admin; sid:1000010; rev:1;)
+
+# FTP brute force
+alert tcp any any -> $HOME_NET 21 (msg:"BRUTE FORCE FTP Login Attempt"; flow:to_server,established; content:"USER"; threshold:type threshold, track by_src, count 5, seconds 30; classtype:attempted-admin; sid:1000011; rev:1;)
+
+# RDP brute force (Windows Remote Desktop)
+alert tcp any any -> $HOME_NET 3389 (msg:"BRUTE FORCE RDP Connection Attempt"; flags:S; threshold:type threshold, track by_src, count 5, seconds 30; classtype:attempted-admin; sid:1000012; rev:1;)
+
+# HTTP Basic Auth brute force
+alert tcp any any -> $HOME_NET 80 (msg:"BRUTE FORCE HTTP Basic Auth"; flow:to_server,established; content:"Authorization: Basic"; threshold:type threshold, track by_src, count 10, seconds 30; classtype:attempted-admin; sid:1000013; rev:1;)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 3: WEB APPLICATION ATTACKS
+# ─────────────────────────────────────────────────────────────────────────────
+
+# SQL Injection detection
+alert tcp any any -> $HTTP_SERVERS $HTTP_PORTS (msg:"WEB-ATTACK SQL Injection Attempt"; flow:to_server,established; content:"UNION SELECT"; nocase; classtype:web-application-attack; sid:1000020; rev:1;)
+
+alert tcp any any -> $HTTP_SERVERS $HTTP_PORTS (msg:"WEB-ATTACK SQL Injection - OR 1=1"; flow:to_server,established; content:"OR 1=1"; nocase; classtype:web-application-attack; sid:1000021; rev:1;)
+
+alert tcp any any -> $HTTP_SERVERS $HTTP_PORTS (msg:"WEB-ATTACK SQL Injection - DROP TABLE"; flow:to_server,established; content:"DROP TABLE"; nocase; classtype:web-application-attack; sid:1000022; rev:1;)
+
+# XSS detection
+alert tcp any any -> $HTTP_SERVERS $HTTP_PORTS (msg:"WEB-ATTACK XSS <script> Tag Detected"; flow:to_server,established; content:"<script>"; nocase; classtype:web-application-attack; sid:1000023; rev:1;)
+
+alert tcp any any -> $HTTP_SERVERS $HTTP_PORTS (msg:"WEB-ATTACK XSS javascript: URI"; flow:to_server,established; content:"javascript:"; nocase; classtype:web-application-attack; sid:1000024; rev:1;)
+
+# Directory traversal
+alert tcp any any -> $HTTP_SERVERS $HTTP_PORTS (msg:"WEB-ATTACK Directory Traversal ../../"; flow:to_server,established; content:"../"; classtype:web-application-attack; sid:1000025; rev:1;)
+
+# Command injection
+alert tcp any any -> $HTTP_SERVERS $HTTP_PORTS (msg:"WEB-ATTACK Command Injection Attempt"; flow:to_server,established; pcre:"/(%3B|;)\s*(cat|ls|wget|curl|chmod|bash|sh|python|nc)\b/i"; classtype:web-application-attack; sid:1000026; rev:1;)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 4: MALWARE & C2 TRAFFIC
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Suspicious DNS queries (common malware beacon pattern)
+alert udp $HOME_NET any -> any 53 (msg:"MALWARE Suspicious DNS Beacon - High Frequency"; threshold:type threshold, track by_src, count 50, seconds 10; classtype:trojan-activity; sid:1000030; rev:1;)
+
+# Metasploit Meterpreter default HTTPS beacon
+alert tcp $HOME_NET any -> any 4444 (msg:"MALWARE Possible Metasploit Meterpreter C2 Port 4444"; flow:to_server; classtype:trojan-activity; sid:1000031; rev:1;)
+
+# Netcat reverse shell
+alert tcp $HOME_NET any -> any any (msg:"MALWARE Possible Netcat Reverse Shell"; flow:to_server,established; content:"cmd.exe"; nocase; classtype:trojan-activity; sid:1000032; rev:1;)
+
+# Cobalt Strike Beacon default checkin
+alert tcp $HOME_NET any -> any 443 (msg:"MALWARE Possible Cobalt Strike Beacon"; flow:to_server; content:"Content-Type: application/octet-stream"; content:"Transfer-Encoding: chunked"; classtype:trojan-activity; sid:1000033; rev:1;)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 5: ICMP THREATS
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ICMP flood
+alert icmp any any -> $HOME_NET any (msg:"DOS ICMP Flood Detected"; threshold:type threshold, track by_src, count 100, seconds 5; classtype:attempted-dos; sid:1000040; rev:1;)
+
+# ICMP oversized (Ping of Death)
+alert icmp any any -> $HOME_NET any (msg:"DOS ICMP Oversized Packet (Ping of Death)"; dsize:>1024; classtype:attempted-dos; sid:1000041; rev:1;)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 6: DATA EXFILTRATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Large outbound DNS TXT response (DNS tunnelling)
+alert udp any 53 -> $HOME_NET any (msg:"EXFIL Possible DNS Tunnelling - Large TXT Response"; content:"|00 10|"; byte_test:2,>,200,0; classtype:policy-violation; sid:1000050; rev:1;)
+
+# Suspicious large outbound POST
+alert tcp $HOME_NET any -> any $HTTP_PORTS (msg:"EXFIL Suspicious Large HTTP POST"; flow:to_server,established; content:"POST"; http_method; dsize:>50000; classtype:policy-violation; sid:1000051; rev:1;)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 7: SENSITIVE PORT MONITORING
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Telnet (unencrypted remote access)
+alert tcp any any -> $HOME_NET 23 (msg:"POLICY Telnet Access Attempt"; flow:to_server; classtype:policy-violation; sid:1000060; rev:1;)
+
+# SMB — common ransomware propagation path
+alert tcp any any -> $HOME_NET 445 (msg:"POLICY SMB Access from External Host"; classtype:policy-violation; sid:1000061; rev:1;)
+
+# Suspicious outbound SMTP (spam bot)
+alert tcp $HOME_NET any -> !$SMTP_SERVERS 25 (msg:"POLICY Outbound SMTP to Non-Mail Server"; flow:to_server; classtype:policy-violation; sid:1000062; rev:1;)
